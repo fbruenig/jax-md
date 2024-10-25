@@ -583,10 +583,10 @@ def is_format_valid(fmt: NeighborListFormat):
 
 def is_box_valid(box: Array) -> bool:
   if jnp.isscalar(box) or box.ndim == 0 or box.ndim == 1:
-    return True
-  if box.ndim == 2:
-    return jnp.triu(box) == box
-  return False
+    return False
+  if box.ndim == 2 and jnp.all(jnp.triu(box) == box) == True:
+    return False
+  return True
 
 
 @dataclasses.dataclass
@@ -694,6 +694,8 @@ def neighbor_list(displacement_or_metric: DisplacementOrMetricFn,
                   r_cutoff: float,
                   dr_threshold: float = 0.0,
                   capacity_multiplier: float = 1.25,
+                  buffer_size_multiplier: float = 1.25,
+                  minimum_cell_size_multiplier: float = 1.0,
                   disable_cell_list: bool = False,
                   mask_self: bool = True,
                   custom_mask_function: Optional[MaskFn] = None,
@@ -755,6 +757,10 @@ def neighbor_list(displacement_or_metric: DisplacementOrMetricFn,
     capacity_multiplier: A floating point scalar specifying the fractional
       increase in maximum neighborhood occupancy we allocate compared with the
       maximum in the example positions.
+    buffer_size_multiplier: A floating point scalar specifying buffer_size_mutlitpler.
+    minimum_cell_size_multiplier: A floating point scalar specifying minimum_cell_size_multiplier.  
+    Increase to avoid excessive capacities, when cutoff is short. 
+    Allows to fit larger systems. 
     disable_cell_list: An optional boolean. If set to `True` then the neighbor
       list is constructed using only distances. This can be useful for
       debugging but should generally be left as `False`.
@@ -889,13 +895,13 @@ def neighbor_list(displacement_or_metric: DisplacementOrMetricFn,
       if not disable_cell_list:
         if neighbors is None:
           _box = kwargs.get('box', box)
-          cell_size = cutoff
+          cell_size = cutoff * minimum_cell_size_multiplier
           if fractional_coordinates:
             err = err.update(PEC.MALFORMED_BOX, is_box_valid(_box))
-            cell_size = _fractional_cell_size(_box, cutoff)
+            cell_size = _fractional_cell_size(_box, cutoff) * minimum_cell_size_multiplier
             _box = 1.0
           if jnp.all(cell_size < _box / 3.):
-            cl_fn = cell_list(_box, cell_size, capacity_multiplier)
+            cl_fn = cell_list(_box, cell_size, buffer_size_multiplier = buffer_size_multiplier)
             cl = cl_fn.allocate(position, extra_capacity=extra_capacity)
         else:
           cell_size = neighbors.cell_size
@@ -909,6 +915,7 @@ def neighbor_list(displacement_or_metric: DisplacementOrMetricFn,
       else:
         err = err.update(PEC.CELL_LIST_OVERFLOW, cl.did_buffer_overflow)
         idx = cell_list_candidate_fn(cl.id_buffer, position.shape)
+        print(f"jax-md partition: cell_size={cell_size}, cl.id_buffer.size={cl.id_buffer.size}, N={position.shape[0]}, cl.did_buffer_overflow={cl.did_buffer_overflow}")
         cl_capacity = cl.cell_capacity
 
       if mask_self:
