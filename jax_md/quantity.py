@@ -59,11 +59,10 @@ Simulator = Tuple[InitFn, ApplyFn]
 
 def force(energy_fn: EnergyFn) -> ForceFn:
   """Computes the force as the negative gradient of an energy."""
-  return grad(lambda R, *args, **kwargs: -energy_fn(R, *args, **kwargs))
-
+  return grad(lambda R, *args, **kwargs: -energy_fn(R, *args, **kwargs)[0])
 
 def clipped_force(energy_fn: EnergyFn, max_force: float) -> ForceFn:
-  force_fn = force(energy_fn)
+  force_fn = canonicalize_force(energy_fn)
   def wrapped_force_fn(R, *args, **kwargs):
     force = force_fn(R, *args, **kwargs)
     force_norm = jnp.linalg.norm(force, axis=-1, keepdims=True)
@@ -82,6 +81,22 @@ def canonicalize_force(energy_or_force_fn: Union[EnergyFn, ForceFn]) -> ForceFn:
       out_shaped = eval_shape(energy_or_force_fn, R, **kwargs)
       if isinstance(out_shaped, ShapeDtypeStruct) and out_shaped.shape == ():
         _force_fn = force(energy_or_force_fn)
+      # This is an unclean way to check the case that the energy function returns a tuple, 
+      # where the first element is the energy and the second element is auxliary information.
+      elif len(out_shaped)>1 and isinstance(out_shaped[0], ShapeDtypeStruct) and out_shaped[0].shape == ():
+        out_shaped = force(energy_or_force_fn)(R, **kwargs) 
+        # Check that the output has the right shape to be a force.
+        is_valid_force = tree_reduce(
+          lambda x, y: x and y,
+          tree_map(lambda x, y: x.shape == y.shape, out_shaped, R),
+          True
+        )
+        if not is_valid_force:
+          raise ValueError('Provided function should be compatible with '
+                           'either an energy or a force. Found a function '
+                           f'whose output has shape {out_shaped}.')
+
+        _force_fn = force(energy_or_force_fn)
       else:
         # Check that the output has the right shape to be a force.
         is_valid_force = tree_reduce(
@@ -95,7 +110,7 @@ def canonicalize_force(energy_or_force_fn: Union[EnergyFn, ForceFn]) -> ForceFn:
                            f'whose output has shape {out_shaped}.')
 
         _force_fn = energy_or_force_fn
-    return _force_fn(R, **kwargs)
+      return _force_fn(R, **kwargs)
 
   return force_fn
 

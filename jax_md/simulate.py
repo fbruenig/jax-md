@@ -818,7 +818,7 @@ def npt_nose_hoover(energy_fn: Callable[..., Array],
 
     def U(eps):
       return energy_fn(position, box=box_fn(vol), perturbation=(1 + eps),
-                       **kwargs)
+                       **kwargs)[0]
 
     dUdV = grad(U)
     KE2 = util.high_precision_sum(momentum ** 2 / mass)
@@ -922,7 +922,7 @@ def npt_nose_hoover_invariant(energy_fn: Callable[..., Array],
     The Hamiltonian of the extended NPT dynamics.
   """
   volume, box_fn = _npt_box_info(state)
-  PE = energy_fn(state.position, box=box_fn(volume), **kwargs)
+  PE = energy_fn(state.position, box=box_fn(volume), **kwargs)[0]
   KE = kinetic_energy(state)
 
   DOF = state.position.size
